@@ -9,7 +9,7 @@
 
 仓库保留原始 GraspLLM 的 Stage 0、Stage 1、Stage 2、Stage 3 流程，并增加 YelpZip 数据预处理、RUR/RBR 独立测试、随机基线、zero-shot 概率评估以及冻结模型的 1/5/10-shot in-context learning 测试。
 
-数据集、模型权重、checkpoint 和实验输出不包含在本仓库中。YelpZip 的完整测试流程与命令见 [YELPZIP_BASE.md](YELPZIP_BASE.md)。
+数据集、模型权重、checkpoint 和实验输出不包含在本仓库中。Linux 端从 Stage 0 到最终推理的完整命令见 [run.md](run.md)，YelpZip 基线设计说明见 [YELPZIP_BASE.md](YELPZIP_BASE.md)。
 
 ## 原始项目
 
