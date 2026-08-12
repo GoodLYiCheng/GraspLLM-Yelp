@@ -18,7 +18,7 @@ export RAW_YELP=$REPO/dataset/yelpzip.csv
 export ZERO_SHOT_NAME=grasp-qwen3-arxiv-zero-shot
 export ZERO_SHOT_CKPT=$GRASPLLM_CHECKPOINT_ROOT/$ZERO_SHOT_NAME
 export FS_ROOT=$REPO/artifacts/yelpzip_original_fewshot
-export RESULT_ROOT=$REPO/output
+export RESULT_ROOT=$REPO/artifacts/yelpzip_complete_results/few-shot
 export PYTHONPATH=$REPO
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -388,6 +388,7 @@ nohup bash scripts/run_yelp_all_evals.sh \
   --support-root "$FS_ROOT" \
   --output-dir "$RESULT_ROOT" \
   --gpus 0,1 \
+  --max-validation-queries 1000 \
   > "$RESULT_ROOT/logs/zero_and_icl_all.log" 2>&1 &
 
 echo $! | tee "$RESULT_ROOT/logs/zero_and_icl_all.pid"
@@ -407,6 +408,7 @@ nohup bash scripts/run_yelp_all_evals.sh \
   --support-root "$FS_ROOT" \
   --output-dir "$RESULT_ROOT" \
   --gpus 0,1 \
+  --max-validation-queries 1000 \
   --icl-only \
   > "$RESULT_ROOT/logs/icl_1_5_10.log" 2>&1 &
 
@@ -415,6 +417,8 @@ tail -f "$RESULT_ROOT/logs/icl_1_5_10.log"
 ```
 
 如果只有一张 GPU，把两条命令中的 `--gpus 0,1` 改成 `--gpus 0`，RUR/RBR 会顺序执行。
+
+`--max-validation-queries 1000` 只对 validation 使用 seed 42 做确定性分层抽样，并保持原标签比例；完整 test 不会缩减。省略该参数时仍使用全部 validation。不要用旧参数 `--max-queries` 代替，因为它会同时限制 validation 和 test。
 
 ## 8. 结果汇总与检查
 

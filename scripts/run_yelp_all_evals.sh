@@ -3,6 +3,7 @@
 set -euo pipefail
 
 MODEL_PATH=""; MODEL_BASE=""; DATASET_ROOT=""; SUPPORT_ROOT=""; OUTPUT_DIR=""; GPUS="0,1"; ICL_ONLY=false
+MAX_VALIDATION_QUERIES=""; VALIDATION_SUBSAMPLE_SEED=42
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -12,9 +13,11 @@ while [[ $# -gt 0 ]]; do
         --support-root) SUPPORT_ROOT="$2"; shift 2;;
         --output-dir) OUTPUT_DIR="$2"; shift 2;;
         --gpus) GPUS="$2"; shift 2;;
+        --max-validation-queries) MAX_VALIDATION_QUERIES="$2"; shift 2;;
+        --validation-subsample-seed) VALIDATION_SUBSAMPLE_SEED="$2"; shift 2;;
         --icl-only) ICL_ONLY=true; shift;;
         -h|--help)
-            echo "Usage: $0 --model-path CKPT --model-base MODEL --support-root DIR [--dataset-root DIR] [--output-dir DIR] [--gpus 0,1] [--icl-only]"; exit 0;;
+            echo "Usage: $0 --model-path CKPT --model-base MODEL --support-root DIR [--dataset-root DIR] [--output-dir DIR] [--gpus 0,1] [--max-validation-queries 1000] [--validation-subsample-seed 42] [--icl-only]"; exit 0;;
         *) echo "unknown argument: $1" >&2; exit 1;;
     esac
 done
@@ -37,13 +40,20 @@ GPU_RBR=${GPU_IDS[1]:-${GPU_IDS[0]}}
 RELATIONS=(yelpzip_rur yelpzip_rbr)
 SHOTS=(1 5 10)
 SEEDS=(42 43 44 45 46)
+VALIDATION_ARGS=()
+if [[ -n "$MAX_VALIDATION_QUERIES" ]]; then
+    [[ "$MAX_VALIDATION_QUERIES" =~ ^[1-9][0-9]*$ ]] || { echo "--max-validation-queries must be a positive integer" >&2; exit 1; }
+    VALIDATION_ARGS+=(--max-validation-queries "$MAX_VALIDATION_QUERIES"
+                      --validation-subsample-seed "$VALIDATION_SUBSAMPLE_SEED")
+fi
 
 run_eval() {
     local gpu="$1" relation="$2" output="$3"
     shift 3
     CUDA_VISIBLE_DEVICES="$gpu" python -u "$REPO/eval/eval_yelp_probability.py" \
         --model-path "$MODEL_PATH" --model-base "$MODEL_BASE" --dataset "$relation" \
-        --output-dir "$output" --device cuda --max-length 4096 --query-max-tokens 512 "$@"
+        --output-dir "$output" --device cuda --max-length 4096 --query-max-tokens 512 \
+        "${VALIDATION_ARGS[@]}" "$@"
 }
 
 run_relation_pair() {
