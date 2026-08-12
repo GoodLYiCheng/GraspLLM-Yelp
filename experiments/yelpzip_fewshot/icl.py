@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Iterable
 
 import numpy as np
@@ -9,6 +10,42 @@ import torch
 LABEL_TEXT = {0: "Legitimate", 1: "Fraudulent"}
 YELP_REVIEW_PREFIX = "The target review text is: "
 YELP_REVIEW_SUFFIX = " Classify the target review as exactly one of: Fraudulent, Legitimate."
+
+
+def stratified_record_subset(records: list[dict], max_records: int | None, *, seed: int = 42) -> list[dict]:
+    """Select a deterministic subset while preserving the observed label ratio."""
+    if max_records is None or max_records >= len(records):
+        return list(records)
+    if max_records <= 0:
+        raise ValueError("max_records must be positive")
+
+    by_label: dict[str, list[tuple[int, dict]]] = {}
+    for position, record in enumerate(records):
+        conversations = record.get("conversations", [])
+        if len(conversations) < 2:
+            raise ValueError("validation records must contain a prompt and label")
+        label = str(conversations[1].get("value", "")).strip()
+        if label not in LABEL_TEXT.values():
+            raise ValueError(f"unexpected Yelp label text: {label!r}")
+        by_label.setdefault(label, []).append((position, record))
+
+    total = len(records)
+    exact = {label: max_records * len(group) / total for label, group in by_label.items()}
+    quotas = {label: int(value) for label, value in exact.items()}
+    remaining = max_records - sum(quotas.values())
+    for label in sorted(by_label, key=lambda key: (-(exact[key] - quotas[key]), key))[:remaining]:
+        quotas[label] += 1
+
+    selected: list[tuple[int, dict]] = []
+    for label, group in by_label.items():
+        ranked = sorted(
+            group,
+            key=lambda item: hashlib.sha256(
+                f"{seed}:{label}:{item[1].get('id', item[0])}".encode("utf-8")
+            ).digest(),
+        )
+        selected.extend(ranked[:quotas[label]])
+    return [record for _, record in sorted(selected, key=lambda item: item[0])]
 
 
 def stack_graph_node_ids(records: Iterable[dict], *, pad_id: int) -> torch.Tensor:

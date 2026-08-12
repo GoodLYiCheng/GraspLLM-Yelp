@@ -24,7 +24,7 @@ from utils.paths import dataset_dir
 from utils.utils import get_model_name_from_path
 from experiments.yelpzip_fewshot.icl import (
     build_icl_conversations, stack_graph_node_ids, support_entries_from_records,
-    truncate_query_review_text, validate_icl_query_records,
+    stratified_record_subset, truncate_query_review_text, validate_icl_query_records,
 )
 
 
@@ -153,6 +153,10 @@ def main() -> int:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max-length", type=int, default=4096)
     parser.add_argument("--max-queries", type=int, default=None)
+    parser.add_argument("--max-validation-queries", type=int, default=None,
+                        help="Deterministically stratify and cap validation only; test remains complete")
+    parser.add_argument("--validation-subsample-seed", type=int, default=42,
+                        help="Seed for --max-validation-queries (default: 42)")
     parser.add_argument("--validation-jsonl", type=Path, default=None,
                         help="Optional disjoint validation file, e.g. few-shot holdout")
     parser.add_argument("--test-jsonl", type=Path, default=None,
@@ -207,6 +211,11 @@ def main() -> int:
     val_path = args.validation_jsonl or data_dir / "ocs_val.jsonl"
     test_path = args.test_jsonl or data_dir / "ocs_test.jsonl"
     val_records = _load_jsonl(val_path, args.max_queries)
+    validation_rows_available = len(val_records)
+    val_records = stratified_record_subset(
+        val_records, args.max_validation_queries, seed=args.validation_subsample_seed,
+    )
+    validation_was_subsampled = len(val_records) < validation_rows_available
     test_records = _load_jsonl(test_path, args.max_queries)
     if icl_support is not None:
         support_ids = [node for node, _ in icl_support]
@@ -266,6 +275,13 @@ def main() -> int:
         "validation": binary_metrics(val_y, val_p, threshold=threshold),
         "test": binary_metrics(test_y, test_p, threshold=threshold),
         "counts": {"validation": int(val_y.size), "test": int(test_y.size)},
+        "validation_sampling": {
+            "method": "deterministic_stratified_sha256" if validation_was_subsampled else "all",
+            "seed": args.validation_subsample_seed if validation_was_subsampled else None,
+            "available": validation_rows_available,
+            "requested_max": args.max_validation_queries,
+            "used": int(val_y.size),
+        },
         "review_id_hash": metadata.get("review_id_hash"),
         "mask_hash": metadata.get("mask_hash"),
         "graph": {

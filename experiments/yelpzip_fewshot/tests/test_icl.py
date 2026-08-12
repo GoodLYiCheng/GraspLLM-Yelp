@@ -5,7 +5,7 @@ import pytest
 
 from experiments.yelpzip_fewshot.icl import (
     build_icl_conversations, stack_graph_node_ids, support_entries_from_records,
-    truncate_query_review_text, validate_icl_query_records,
+    stratified_record_subset, truncate_query_review_text, validate_icl_query_records,
 )
 
 
@@ -78,3 +78,19 @@ def test_icl_rejects_support_reused_as_validation_query():
             [_record(0, 0)], support_node_ids=[0], labels=labels,
             allowed_mask=np.asarray([True, True]), split_name="validation",
         )
+
+
+def test_validation_subset_is_deterministic_stratified_and_keeps_input_order():
+    records = [_record(node, int(node >= 8)) for node in range(10)]
+    first = stratified_record_subset(records, 5, seed=42)
+    second = stratified_record_subset(records, 5, seed=42)
+    assert [record["id"] for record in first] == [record["id"] for record in second]
+    assert [record["id"] for record in first] == sorted(record["id"] for record in first)
+    assert sum(record["conversations"][1]["value"] == "Fraudulent" for record in first) == 1
+
+
+def test_validation_subset_none_keeps_all_and_invalid_size_rejected():
+    records = [_record(0, 0), _record(1, 1)]
+    assert stratified_record_subset(records, None) == records
+    with pytest.raises(ValueError, match="positive"):
+        stratified_record_subset(records, 0)
