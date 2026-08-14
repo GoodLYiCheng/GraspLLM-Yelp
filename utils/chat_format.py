@@ -115,7 +115,7 @@ def install_chat_template(tokenizer, backbone_kind: Optional[str] = None,
 
 
 def _ids_from_chat_template(tokenizer, msgs, *, add_generation_prompt: bool,
-                            return_mask: bool):
+                            return_mask: bool, chat_template_kwargs=None):
     """Run apply_chat_template and return (input_ids: list[int], mask: list[int] or None).
 
     Handles the multiple return shapes HF can produce:
@@ -124,12 +124,14 @@ def _ids_from_chat_template(tokenizer, msgs, *, add_generation_prompt: bool,
       * BatchEncoding with attribute access
       * dict with 'input_ids' / 'assistant_masks'
     """
+    template_kwargs = dict(chat_template_kwargs or {})
     if return_mask:
         out = tokenizer.apply_chat_template(
             msgs, tokenize=True,
             add_generation_prompt=add_generation_prompt,
             return_dict=True,
             return_assistant_tokens_mask=True,
+            **template_kwargs,
         )
         ids = out["input_ids"] if isinstance(out, dict) else out.input_ids
         mask = out["assistant_masks"] if isinstance(out, dict) else out.assistant_masks
@@ -138,6 +140,7 @@ def _ids_from_chat_template(tokenizer, msgs, *, add_generation_prompt: bool,
             msgs, tokenize=True,
             add_generation_prompt=add_generation_prompt,
             return_dict=True,
+            **template_kwargs,
         )
         ids = out["input_ids"] if isinstance(out, dict) else out.input_ids
         mask = None
@@ -160,11 +163,13 @@ def _ids_from_chat_template(tokenizer, msgs, *, add_generation_prompt: bool,
     return ids, mask
 
 
-def _locate_placeholders_via_text(tokenizer, msgs, add_generation_prompt: bool
+def _locate_placeholders_via_text(tokenizer, msgs, add_generation_prompt: bool,
+                                  chat_template_kwargs=None
                                   ) -> Tuple[str, List[Tuple[int, int]]]:
     text = tokenizer.apply_chat_template(
         msgs, tokenize=False,
         add_generation_prompt=add_generation_prompt,
+        **dict(chat_template_kwargs or {}),
     )
 
     positions = []
@@ -300,7 +305,8 @@ def build_eval_prompt(tokenizer,
 def build_multi_turn_eval_prompt(tokenizer,
                                  conversations: List[Dict[str, str]],
                                  has_graph: bool = True,
-                                 max_length: Optional[int] = None) -> torch.Tensor:
+                                 max_length: Optional[int] = None,
+                                 chat_template_kwargs=None) -> torch.Tensor:
     """Build an evaluation prompt with labelled support turns and one query."""
     role_map = {"human": "user", "gpt": "assistant", "user": "user", "assistant": "assistant"}
     msgs = []
@@ -311,11 +317,13 @@ def build_multi_turn_eval_prompt(tokenizer,
     if not msgs or msgs[-1]["role"] != "user":
         raise ValueError("few-shot evaluation conversations must end with the query user turn")
     ids, _ = _ids_from_chat_template(
-        tokenizer, msgs, add_generation_prompt=True, return_mask=False
+        tokenizer, msgs, add_generation_prompt=True, return_mask=False,
+        chat_template_kwargs=chat_template_kwargs,
     )
     if has_graph:
         text, positions = _locate_placeholders_via_text(
-            tokenizer, msgs, add_generation_prompt=True
+            tokenizer, msgs, add_generation_prompt=True,
+            chat_template_kwargs=chat_template_kwargs,
         )
         new_ids: List[int] = []
         consumed = 0

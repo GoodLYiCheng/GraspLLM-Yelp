@@ -10,7 +10,7 @@ from huggingface_hub import hf_hub_download
 
 
 
-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", cache_dir="../../checkpoint"):
+def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", cache_dir="../../checkpoint", attn_implementation=None, torch_dtype=None):
     kwargs = {"device_map": device_map}
 
     if load_8bit:
@@ -24,7 +24,9 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             bnb_4bit_quant_type='nf4'
         )
     else:
-        kwargs['torch_dtype'] = torch.float16
+        kwargs['torch_dtype'] = torch.float16 if torch_dtype is None else torch_dtype
+    if attn_implementation is not None:
+        kwargs['attn_implementation'] = attn_implementation
 
     if 'grasp' in model_name.lower():
         # Load GraspLLM model
