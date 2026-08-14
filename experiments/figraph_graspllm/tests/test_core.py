@@ -15,7 +15,7 @@ from experiments.figraph_graspllm.evaluation import annual_report, select_valida
 from experiments.figraph_graspllm.gate import paired_comparison
 from experiments.figraph_graspllm.motifs import compute_motifs
 from experiments.figraph_graspllm.merge_embeddings import merge_shards
-from experiments.figraph_graspllm.prepare import _read_year
+from experiments.figraph_graspllm.prepare import _read_year, validate_snapshot_years
 from experiments.figraph_graspllm.prompts import matched_text_prompt, pack_prompt
 from experiments.figraph_graspllm.provenance import validate_projector_provenance
 from experiments.figraph_graspllm.support import sample_support
@@ -61,6 +61,15 @@ def test_hmt_is_exact_and_deterministic():
     assert first.token_ids[:4] == [0, 1, 2, 3]
     assert first.token_ids[-4:] == [96, 97, 98, 99]
     assert len(first.token_ids) == 10
+
+
+def test_snapshot_selection_can_skip_2014_but_not_evaluation_years():
+    selected = validate_snapshot_years(tuple(range(2015, 2023)))
+    assert selected == tuple(range(2015, 2023))
+    with pytest.raises(ValueError, match="missing"):
+        validate_snapshot_years((2015, 2016, 2017, 2018, 2019, 2020, 2021))
+    with pytest.raises(ValueError, match="ascending"):
+        validate_snapshot_years((2015, 2017, 2016, 2018, 2019, 2020, 2021, 2022))
 
 
 def test_embedding_shards_are_disjoint_and_merge_in_node_order(tmp_path: Path):

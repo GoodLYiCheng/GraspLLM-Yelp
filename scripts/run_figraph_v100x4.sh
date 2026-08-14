@@ -15,8 +15,10 @@ V100_GPU_IDS="${V100_GPU_IDS:-0,1,2,3}"
 MAX_LENGTH="${MAX_LENGTH:-16384}"
 NO_PROGRESS="${NO_PROGRESS:-1}"
 FORCE_PREFLIGHT="${FORCE_PREFLIGHT:-0}"
+FIGRAPH_YEARS="${FIGRAPH_YEARS:-2014 2015 2016 2017 2018 2019 2020 2021 2022}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 IFS=',' read -r -a GPU_IDS <<< "$V100_GPU_IDS"
+read -r -a SNAPSHOT_YEARS <<< "$FIGRAPH_YEARS"
 [[ "${#GPU_IDS[@]}" -eq 4 ]] || { echo "V100_GPU_IDS must contain exactly four GPU IDs" >&2; exit 2; }
 [[ "$MAX_LENGTH" == "16384" ]] || {
   echo "the audited V100 profile fixes MAX_LENGTH=16384; use run_figraph_mvp.sh for the native-32K profile" >&2; exit 2;
@@ -49,11 +51,20 @@ if [[ "$MODE" == "full" ]]; then
   "$PYTHON_BIN" -c 'import json,sys; p=json.load(open(sys.argv[1])); sys.exit(0 if p.get("status")=="PASS" else 4)' "$GATE_JSON"
 fi
 
-if [[ "$FORCE_PREFLIGHT" == "1" || ! -f "$DATA_DIR/processed_data.pt" || ! -f "$DATA_DIR/text_cohort.pt" ]]; then
-  "$PYTHON_BIN" -m experiments.figraph_graspllm.prepare \
-    --raw-root "$FIGRAPH_RAW_ROOT" --output-dir "$DATA_DIR" --motif-mode grasp_legacy
+prepare_needed=0
+if [[ "$FORCE_PREFLIGHT" == "1" || ! -f "$DATA_DIR/processed_data.pt" || ! -f "$DATA_DIR/text_cohort.pt" || ! -f "$DATA_DIR/run_manifest.json" ]]; then
+  prepare_needed=1
+elif ! "$PYTHON_BIN" -c 'import json,sys; actual=json.load(open(sys.argv[1])).get("snapshot_years"); expected=[int(value) for value in sys.argv[2:]]; raise SystemExit(0 if actual == expected else 1)' \
+  "$DATA_DIR/run_manifest.json" "${SNAPSHOT_YEARS[@]}"; then
+  echo "FiGraph snapshot selection changed; rebuilding preflight artifacts" >&2
+  prepare_needed=1
 fi
-if [[ "$FORCE_PREFLIGHT" == "1" || ! -f "$DATA_DIR/qwen3_token_audit.json" ]]; then
+if [[ "$prepare_needed" == "1" ]]; then
+  "$PYTHON_BIN" -m experiments.figraph_graspllm.prepare \
+    --raw-root "$FIGRAPH_RAW_ROOT" --output-dir "$DATA_DIR" --motif-mode grasp_legacy \
+    --years "${SNAPSHOT_YEARS[@]}"
+fi
+if [[ "$prepare_needed" == "1" || "$FORCE_PREFLIGHT" == "1" || ! -f "$DATA_DIR/qwen3_token_audit.json" ]]; then
   "$PYTHON_BIN" -m experiments.figraph_graspllm.audit_tokens \
     --processed-data "$DATA_DIR/processed_data.pt" --model-path "$QWEN3_EMBED" \
     --output "$DATA_DIR/qwen3_token_audit.json"

@@ -8,7 +8,7 @@ FiGraph payload files are intentionally excluded from Git and Git LFS. Obtain th
 
 ## Fixed contracts
 
-- Company-year node key, annual direct-company graphs, and a nine-snapshot disjoint union.
+- Company-year node key, annual direct-company graphs, and a 2014--2022 snapshot disjoint union by default.
 - 2019 support only; 2020 threshold/validation; 2021 and 2022 future test.
 - Missing MDA remains a zero-text graph node but is excluded from the main cohort.
 - Frozen non-FiGraph MotifGNN and frozen non-FiGraph projector. Projector loading requires a hash-bound provenance declaration.
@@ -37,6 +37,8 @@ python -m experiments.figraph_graspllm.make_projector_provenance \
 ```
 
 Then export the paths required at the top of `scripts/run_figraph_mvp.sh` and select `MODE=smoke`, `MODE=pilot`, or `MODE=full`. Full mode refuses to start unless the pilot Gate JSON says `PASS`.
+
+If a raw annual payload is unavailable, `FIGRAPH_YEARS` can explicitly select the snapshots to process. It must retain 2019--2022, and the output manifest records the omitted years. For example, an unavailable 2014 workbook can be excluded with `FIGRAPH_YEARS="2015 2016 2017 2018 2019 2020 2021 2022"`; this is an eight-snapshot protocol variant, not the default nine-snapshot experiment.
 
 ## Four-V100 profile
 

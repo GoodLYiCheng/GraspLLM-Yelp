@@ -14,6 +14,8 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DEVICE="${DEVICE:-cuda}"
 MODE="${MODE:-smoke}"                    # smoke | pilot | full
 NO_PROGRESS="${NO_PROGRESS:-0}"
+FIGRAPH_YEARS="${FIGRAPH_YEARS:-2014 2015 2016 2017 2018 2019 2020 2021 2022}"
+read -r -a SNAPSHOT_YEARS <<< "$FIGRAPH_YEARS"
 PROGRESS_ARG=()
 [[ "$NO_PROGRESS" == "1" ]] && PROGRESS_ARG+=(--no-progress)
 
@@ -32,7 +34,8 @@ fi
 
 # Preflight is idempotent and preserves the graph-free text-only contract.
 "$PYTHON_BIN" -m experiments.figraph_graspllm.prepare \
-  --raw-root "$FIGRAPH_RAW_ROOT" --output-dir "$DATA_DIR" --motif-mode grasp_legacy
+  --raw-root "$FIGRAPH_RAW_ROOT" --output-dir "$DATA_DIR" --motif-mode grasp_legacy \
+  --years "${SNAPSHOT_YEARS[@]}"
 "$PYTHON_BIN" -m experiments.figraph_graspllm.audit_tokens \
   --processed-data "$DATA_DIR/processed_data.pt" --model-path "$QWEN3_EMBED" \
   --output "$DATA_DIR/qwen3_token_audit.json"

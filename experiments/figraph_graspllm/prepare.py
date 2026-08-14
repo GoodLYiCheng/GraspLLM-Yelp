@@ -16,6 +16,23 @@ from .motifs import MOTIF_NAMES, compute_motifs, offset_channels
 
 
 YEARS = tuple(range(2014, 2023))
+REQUIRED_EVALUATION_YEARS = frozenset((2019, 2020, 2021, 2022))
+
+
+def validate_snapshot_years(values: list[int] | tuple[int, ...]) -> tuple[int, ...]:
+    """Validate an explicit, ordered FiGraph snapshot selection."""
+    snapshot_years = tuple(values)
+    if not snapshot_years:
+        raise ValueError("at least one FiGraph snapshot year is required")
+    if tuple(sorted(snapshot_years)) != snapshot_years or len(set(snapshot_years)) != len(snapshot_years):
+        raise ValueError("snapshot years must be unique and in ascending order")
+    unsupported = set(snapshot_years) - set(YEARS)
+    if unsupported:
+        raise ValueError(f"unsupported FiGraph snapshot years: {sorted(unsupported)}")
+    missing = sorted(REQUIRED_EVALUATION_YEARS - set(snapshot_years))
+    if missing:
+        raise ValueError(f"snapshot selection must retain 2019--2022; missing={missing}")
+    return snapshot_years
 
 
 def _read_mda(year_dir: Path, year: int) -> pd.DataFrame:
@@ -91,8 +108,15 @@ def _read_year(raw_root: Path, year: int):
     return features, texts.tolist(), present, pairs, audit
 
 
-def prepare(raw_root: Path, output_dir: Path, *, motif_mode: str) -> dict:
+def prepare(
+    raw_root: Path,
+    output_dir: Path,
+    *,
+    motif_mode: str,
+    snapshot_years: tuple[int, ...] = YEARS,
+) -> dict:
     raw_root = raw_root.resolve()
+    snapshot_years = validate_snapshot_years(snapshot_years)
     output_dir.mkdir(parents=True, exist_ok=True)
     node_keys: list[str] = []
     company_ids: list[str] = []
@@ -105,7 +129,7 @@ def prepare(raw_root: Path, output_dir: Path, *, motif_mode: str) -> dict:
     annual_audit = {}
     offset = 0
 
-    for year in YEARS:
+    for year in snapshot_years:
         features, texts, present, pairs, audit = _read_year(raw_root, year)
         ids = features["nodeID"].astype(str).tolist()
         mapping = {node_id: index for index, node_id in enumerate(ids)}
@@ -160,6 +184,9 @@ def prepare(raw_root: Path, output_dir: Path, *, motif_mode: str) -> dict:
         "node_order_hash": node_order_hash,
         "text_hash": text_hash,
         "graph": "annual direct-company disjoint union",
+        "snapshot_years": list(snapshot_years),
+        "snapshot_count": len(snapshot_years),
+        "excluded_snapshot_years": [year for year in YEARS if year not in snapshot_years],
         "cross_year_edges": False,
         "edge_types_collapsed": True,
         "background_projection": False,
@@ -238,7 +265,7 @@ def prepare(raw_root: Path, output_dir: Path, *, motif_mode: str) -> dict:
         "validation": {"year": 2020, "rows": int(val_mask.sum())},
         "test": {"years": [2021, 2022], "rows": int(test_mask.sum())},
         "excluded_missing_mda": {
-            str(year): int((~present_tensor & (year_tensor == year)).sum()) for year in YEARS
+            str(year): int((~present_tensor & (year_tensor == year)).sum()) for year in snapshot_years
         },
         "node_order_hash": node_order_hash,
     }
@@ -256,8 +283,25 @@ def main() -> int:
         choices=("grasp_legacy", "exact_edge_membership"),
         default="grasp_legacy",
     )
+    parser.add_argument(
+        "--years",
+        type=int,
+        nargs="+",
+        default=list(YEARS),
+        help="FiGraph snapshot years, ascending; must include 2019 2020 2021 2022",
+    )
     args = parser.parse_args()
-    print(json.dumps(prepare(args.raw_root, args.output_dir, motif_mode=args.motif_mode), indent=2))
+    print(
+        json.dumps(
+            prepare(
+                args.raw_root,
+                args.output_dir,
+                motif_mode=args.motif_mode,
+                snapshot_years=tuple(args.years),
+            ),
+            indent=2,
+        )
+    )
     return 0
 
 
