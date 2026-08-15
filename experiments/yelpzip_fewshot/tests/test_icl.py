@@ -71,6 +71,19 @@ def test_query_truncation_preserves_graph_and_classification_instruction():
     assert truncated.endswith("Classify the target review as exactly one of: Fraudulent, Legitimate.")
 
 
+def test_omitted_caps_preserve_complete_support_and_query_text():
+    text = (
+        "Given a review-centered graph: <graph>. The target review text is: abcdef "
+        "Classify the target review as exactly one of: Fraudulent, Legitimate."
+    )
+    assert truncate_query_review_text(_Tokenizer(), text, None) == text
+    conversations = build_icl_conversations(
+        support=[(0, 0)], raw_texts=["complete support review"],
+        query_user_text="Target <graph>", tokenizer=_Tokenizer(), support_max_tokens=None,
+    )
+    assert "complete support review" in conversations[0]["value"]
+
+
 def test_icl_rejects_support_reused_as_validation_query():
     labels = np.asarray([0, 1], dtype=np.int8)
     with pytest.raises(ValueError, match="reused"):

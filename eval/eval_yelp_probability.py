@@ -70,8 +70,8 @@ def _score_split(
     icl_support_records: list[dict] | None = None,
     icl_support_graphs: bool = False,
     raw_texts: list[str] | None = None,
-    icl_support_max_tokens: int = 96,
-    query_max_tokens: int = 512,
+    icl_support_max_tokens: int | None = None,
+    query_max_tokens: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     labels, probabilities = [], []
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,7 +86,7 @@ def _score_split(
             label = int(label_text == "Fraudulent")
             if icl_support is None:
                 prompt_ids = build_eval_prompt(
-                    tokenizer, user_text, has_graph=True, max_length=max_length
+                    tokenizer, user_text, has_graph=True, max_length=None
                 )
             else:
                 if raw_texts is None:
@@ -100,7 +100,7 @@ def _score_split(
                     include_support_graphs=icl_support_graphs,
                 )
                 prompt_ids = build_multi_turn_eval_prompt(
-                    tokenizer, conversations, has_graph=True, max_length=max_length
+                    tokenizer, conversations, has_graph=True, max_length=None
                 )
             graph_records = icl_support_records if icl_support_graphs else None
             graph_marker_count = int((prompt_ids < 0).sum().item())
@@ -124,7 +124,8 @@ def _score_split(
             if expanded_length > max_length:
                 raise ValueError(
                     f"expanded graph-aware prompt has {expanded_length} tokens, exceeding "
-                    f"max_length={max_length}; lower --icl-support-max-tokens or raise --max-length"
+                    f"max_length={max_length}; full Yelp text is never silently truncated. "
+                    "Use explicit --icl-support-max-tokens/--query-max-tokens or raise --max-length."
                 )
             probability = binary_answer_probability(
                 model,
@@ -140,6 +141,7 @@ def _score_split(
                 "ground_truth": label,
                 "fraud_probability": probability,
                 "support_node_ids": [] if icl_support is None else [node for node, _ in icl_support],
+                "prompt_tokens_expanded": expanded_length,
             }) + "\n")
     return np.asarray(labels, dtype=np.int8), np.asarray(probabilities, dtype=np.float64)
 
@@ -151,7 +153,8 @@ def main() -> int:
     parser.add_argument("--dataset", required=True, choices=["yelpzip_rur", "yelpzip_rbr"])
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--max-length", type=int, default=4096)
+    parser.add_argument("--max-length", type=int, default=32768,
+                        help="Qwen3 prompt ceiling including expanded graph tokens (default: 32768)")
     parser.add_argument("--max-queries", type=int, default=None)
     parser.add_argument("--max-validation-queries", type=int, default=None,
                         help="Deterministically stratify and cap validation only; test remains complete")
@@ -165,12 +168,12 @@ def main() -> int:
                         help="Record support provenance for a few-shot run")
     parser.add_argument("--icl-support-jsonl", type=Path, default=None,
                         help="Labelled support examples injected into each query prompt; no parameters are trained")
-    parser.add_argument("--icl-support-max-tokens", type=int, default=96,
-                        help="Maximum text tokens retained for each in-context support review")
+    parser.add_argument("--icl-support-max-tokens", type=int, default=None,
+                        help="Optional cap for each support review; omitted keeps full text")
     parser.add_argument("--icl-support-graphs", action="store_true",
                         help="Attach each support record's own graph embedding to its <graph> marker")
-    parser.add_argument("--query-max-tokens", type=int, default=512,
-                        help="Maximum tokens retained from the target Yelp review body (default: 512)")
+    parser.add_argument("--query-max-tokens", type=int, default=None,
+                        help="Optional cap for target review text; omitted keeps full text")
     args = parser.parse_args()
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -269,6 +272,13 @@ def main() -> int:
             "llm_frozen": True,
             "projector_frozen": True,
             "gnn_frozen": True,
+        },
+        "input_policy": {
+            "max_context_tokens": args.max_length,
+            "query_text_max_tokens": args.query_max_tokens,
+            "support_text_max_tokens": args.icl_support_max_tokens if args.icl_support_jsonl else None,
+            "default_text_policy": "full_text_no_truncation",
+            "overflow_policy": "raise_error_no_silent_truncation",
         },
         "validation_context_path": str(val_path.resolve()),
         "test_context_path": str(test_path.resolve()),

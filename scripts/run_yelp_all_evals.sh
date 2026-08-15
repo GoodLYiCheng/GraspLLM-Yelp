@@ -3,6 +3,9 @@
 set -euo pipefail
 
 MODEL_PATH=""; MODEL_BASE=""; DATASET_ROOT=""; SUPPORT_ROOT=""; OUTPUT_DIR=""; GPUS="0,1"; ICL_ONLY=false
+YELP_MAX_LENGTH="${YELP_MAX_LENGTH:-32768}"
+YELP_QUERY_MAX_TOKENS="${YELP_QUERY_MAX_TOKENS:-}"
+YELP_SUPPORT_MAX_TOKENS="${YELP_SUPPORT_MAX_TOKENS:-}"
 MAX_VALIDATION_QUERIES=""; VALIDATION_SUBSAMPLE_SEED=42
 
 while [[ $# -gt 0 ]]; do
@@ -25,6 +28,12 @@ done
 [[ -n "$MODEL_PATH" ]] || { echo "--model-path is required" >&2; exit 1; }
 [[ -n "$MODEL_BASE" ]] || { echo "--model-base is required" >&2; exit 1; }
 [[ -n "$SUPPORT_ROOT" ]] || { echo "--support-root is required (existing 1/5/10-shot support directory)" >&2; exit 1; }
+[[ "$YELP_MAX_LENGTH" =~ ^[1-9][0-9]*$ ]] || { echo "YELP_MAX_LENGTH must be a positive integer" >&2; exit 1; }
+for token_cap in "$YELP_QUERY_MAX_TOKENS" "$YELP_SUPPORT_MAX_TOKENS"; do
+    [[ -z "$token_cap" || "$token_cap" =~ ^[1-9][0-9]*$ ]] || {
+        echo "YELP_QUERY_MAX_TOKENS and YELP_SUPPORT_MAX_TOKENS must be empty or positive integers" >&2; exit 1;
+    }
+done
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DATASET_ROOT=${DATASET_ROOT:-${GRASPLLM_DATASET_ROOT:-$REPO/dataset}}
@@ -46,14 +55,17 @@ if [[ -n "$MAX_VALIDATION_QUERIES" ]]; then
     VALIDATION_ARGS+=(--max-validation-queries "$MAX_VALIDATION_QUERIES"
                       --validation-subsample-seed "$VALIDATION_SUBSAMPLE_SEED")
 fi
+TEXT_LIMIT_ARGS=()
+[[ -n "$YELP_QUERY_MAX_TOKENS" ]] && TEXT_LIMIT_ARGS+=(--query-max-tokens "$YELP_QUERY_MAX_TOKENS")
+[[ -n "$YELP_SUPPORT_MAX_TOKENS" ]] && TEXT_LIMIT_ARGS+=(--icl-support-max-tokens "$YELP_SUPPORT_MAX_TOKENS")
 
 run_eval() {
     local gpu="$1" relation="$2" output="$3"
     shift 3
     CUDA_VISIBLE_DEVICES="$gpu" python -u "$REPO/eval/eval_yelp_probability.py" \
         --model-path "$MODEL_PATH" --model-base "$MODEL_BASE" --dataset "$relation" \
-        --output-dir "$output" --device cuda --max-length 4096 --query-max-tokens 512 \
-        "${VALIDATION_ARGS[@]}" "$@"
+        --output-dir "$output" --device cuda --max-length "$YELP_MAX_LENGTH" \
+        "${VALIDATION_ARGS[@]}" "${TEXT_LIMIT_ARGS[@]}" "$@"
 }
 
 run_relation_pair() {
@@ -78,11 +90,6 @@ else
 fi
 
 for shot in "${SHOTS[@]}"; do
-    case "$shot" in
-        1) SUPPORT_TEXT_TOKENS=96; QUERY_TEXT_TOKENS=512;;
-        5) SUPPORT_TEXT_TOKENS=64; QUERY_TEXT_TOKENS=384;;
-        10) SUPPORT_TEXT_TOKENS=32; QUERY_TEXT_TOKENS=256;;
-    esac
     for seed in "${SEEDS[@]}"; do
         echo "[all-eval] GPU: ICL k=$shot seed=$seed"
         # RUR and RBR need relation-specific support files, so run explicitly.
@@ -91,23 +98,23 @@ for shot in "${SHOTS[@]}"; do
                 --validation-jsonl "$SUPPORT_ROOT/yelpzip_rur/k${shot}_seed${seed}/validation_holdout.jsonl" \
                 --icl-support-jsonl "$SUPPORT_ROOT/yelpzip_rur/k${shot}_seed${seed}/support_train.jsonl" \
                 --support-manifest "$SUPPORT_ROOT/yelpzip_rur/k${shot}_seed${seed}/support_manifest.json" \
-                --icl-support-max-tokens "$SUPPORT_TEXT_TOKENS" --query-max-tokens "$QUERY_TEXT_TOKENS" --icl-support-graphs
+                --icl-support-graphs
             run_eval "$GPU_RBR" yelpzip_rbr "$OUTPUT_DIR/few_shot/yelpzip_rbr/k${shot}_seed${seed}" \
                 --validation-jsonl "$SUPPORT_ROOT/yelpzip_rbr/k${shot}_seed${seed}/validation_holdout.jsonl" \
                 --icl-support-jsonl "$SUPPORT_ROOT/yelpzip_rbr/k${shot}_seed${seed}/support_train.jsonl" \
                 --support-manifest "$SUPPORT_ROOT/yelpzip_rbr/k${shot}_seed${seed}/support_manifest.json" \
-                --icl-support-max-tokens "$SUPPORT_TEXT_TOKENS" --query-max-tokens "$QUERY_TEXT_TOKENS" --icl-support-graphs
+                --icl-support-graphs
         else
             run_eval "$GPU_RUR" yelpzip_rur "$OUTPUT_DIR/few_shot/yelpzip_rur/k${shot}_seed${seed}" \
                 --validation-jsonl "$SUPPORT_ROOT/yelpzip_rur/k${shot}_seed${seed}/validation_holdout.jsonl" \
                 --icl-support-jsonl "$SUPPORT_ROOT/yelpzip_rur/k${shot}_seed${seed}/support_train.jsonl" \
                 --support-manifest "$SUPPORT_ROOT/yelpzip_rur/k${shot}_seed${seed}/support_manifest.json" \
-                --icl-support-max-tokens "$SUPPORT_TEXT_TOKENS" --query-max-tokens "$QUERY_TEXT_TOKENS" --icl-support-graphs & local_rur_pid=$!
+                --icl-support-graphs & local_rur_pid=$!
             run_eval "$GPU_RBR" yelpzip_rbr "$OUTPUT_DIR/few_shot/yelpzip_rbr/k${shot}_seed${seed}" \
                 --validation-jsonl "$SUPPORT_ROOT/yelpzip_rbr/k${shot}_seed${seed}/validation_holdout.jsonl" \
                 --icl-support-jsonl "$SUPPORT_ROOT/yelpzip_rbr/k${shot}_seed${seed}/support_train.jsonl" \
                 --support-manifest "$SUPPORT_ROOT/yelpzip_rbr/k${shot}_seed${seed}/support_manifest.json" \
-                --icl-support-max-tokens "$SUPPORT_TEXT_TOKENS" --query-max-tokens "$QUERY_TEXT_TOKENS" --icl-support-graphs & local_rbr_pid=$!
+                --icl-support-graphs & local_rbr_pid=$!
             wait "$local_rur_pid"
             wait "$local_rbr_pid"
         fi

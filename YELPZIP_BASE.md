@@ -107,19 +107,16 @@ for relation in yelpzip_rur yelpzip_rbr; do
     --ocs-validation "$GRASPLLM_DATASET_ROOT/$relation/ocs_val.jsonl" \
     --output-dir "$FS_ROOT/$relation"
 
+  # Qwen3 retains complete support/query review text by default.
+  # Add explicit token caps only for a constrained-context ablation.
   for k in 1 5 10; do
-    case "$k" in
-      1) support_tokens=96; query_tokens=512 ;;
-      5) support_tokens=64; query_tokens=384 ;;
-      10) support_tokens=32; query_tokens=256 ;;
-    esac
     for seed in 42 43 44 45 46; do
       python eval/eval_yelp_probability.py \
         --model-path "$ZERO_SHOT_CKPT" --model-base /data/Qwen/Qwen3-8B \
         --dataset "$relation" --validation-jsonl "$FS_ROOT/$relation/k${k}_seed${seed}/validation_holdout.jsonl" \
         --icl-support-jsonl "$FS_ROOT/$relation/k${k}_seed${seed}/support_train.jsonl" \
         --support-manifest "$FS_ROOT/$relation/k${k}_seed${seed}/support_manifest.json" \
-        --icl-support-max-tokens "$support_tokens" --query-max-tokens "$query_tokens" --icl-support-graphs \
+        --icl-support-graphs --max-length 32768 \
         --output-dir "$FS_ROOT/$relation/results/k${k}_seed${seed}" --device cuda
     done
   done

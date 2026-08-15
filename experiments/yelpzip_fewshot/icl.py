@@ -108,17 +108,18 @@ def validate_icl_query_records(
         seen.add(node_id)
 
 
-def truncate_tokens(tokenizer, text: str, max_tokens: int) -> str:
+def truncate_tokens(tokenizer, text: str, max_tokens: int | None) -> str:
+    """Return the complete text unless an explicit positive token cap is supplied."""
+    if max_tokens is None:
+        return str(text)
     if max_tokens <= 0:
         raise ValueError("ICL support max_tokens must be positive")
     ids = tokenizer(str(text), add_special_tokens=False).input_ids[:max_tokens]
     return tokenizer.decode(ids, skip_special_tokens=True)
 
 
-def truncate_query_review_text(tokenizer, user_text: str, max_tokens: int) -> str:
-    """Truncate only Yelp review content while preserving graph/task syntax."""
-    if max_tokens <= 0:
-        raise ValueError("query review max_tokens must be positive")
+def truncate_query_review_text(tokenizer, user_text: str, max_tokens: int | None) -> str:
+    """Preserve the full Yelp review unless an explicit positive cap is supplied."""
     start = user_text.find(YELP_REVIEW_PREFIX)
     if start < 0:
         raise ValueError("Yelp query is missing the target-review prefix")
@@ -126,6 +127,10 @@ def truncate_query_review_text(tokenizer, user_text: str, max_tokens: int) -> st
     end = user_text.find(YELP_REVIEW_SUFFIX, body_start)
     if end < 0:
         raise ValueError("Yelp query is missing the classification suffix")
+    if max_tokens is None:
+        return user_text
+    if max_tokens <= 0:
+        raise ValueError("query review max_tokens must be positive")
     review = user_text[body_start:end]
     truncated = truncate_tokens(tokenizer, review, max_tokens)
     return user_text[:body_start] + truncated + user_text[end:]
@@ -137,7 +142,7 @@ def build_icl_conversations(
     raw_texts: Iterable[str],
     query_user_text: str,
     tokenizer,
-    support_max_tokens: int,
+    support_max_tokens: int | None,
     include_support_graphs: bool = False,
 ) -> list[dict[str, str]]:
     """Build demonstrations followed by the original graph query.
