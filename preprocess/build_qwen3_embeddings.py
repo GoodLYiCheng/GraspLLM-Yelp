@@ -209,8 +209,20 @@ def shard_indices(n: int, shard_id: int, num_shards: int) -> List[int]:
 
 
 def auto_batch_size(max_length: int, user_bs: int) -> int:
-    table = {256: 128, 512: 64, 1024: 32, 2048: 16, 4096: 8}
-    suggested = table.get(max_length, 16)
+    table = {
+        256: 128,
+        512: 64,
+        1024: 32,
+        2048: 16,
+        4096: 8,
+        8192: 4,
+        16384: 2,
+        24576: 1,
+        32768: 1,
+    }
+    # Unknown long contexts must default conservatively; the previous fallback
+    # of 16 could OOM before a FiGraph 32K run produced its first batch.
+    suggested = table.get(max_length, 1 if max_length > 4096 else 16)
     if user_bs > 0 and user_bs < suggested:
         return user_bs
     return suggested
