@@ -39,7 +39,7 @@ GPU_RUR=${GPU_IDS[0]}
 GPU_RBR=${GPU_IDS[1]:-${GPU_IDS[0]}}
 RELATIONS=(yelpzip_rur yelpzip_rbr)
 SHOTS=(1 5 10)
-SEEDS=(42 43 44 45 46)
+SEEDS=(42)
 VALIDATION_ARGS=()
 if [[ -n "$MAX_VALIDATION_QUERIES" ]]; then
     [[ "$MAX_VALIDATION_QUERIES" =~ ^[1-9][0-9]*$ ]] || { echo "--max-validation-queries must be a positive integer" >&2; exit 1; }
