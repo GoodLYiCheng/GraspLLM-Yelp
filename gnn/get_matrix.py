@@ -27,6 +27,55 @@ def load_data(dataset):
     return features, edge_index
 
 
+def load_stage1_data(dataset, feature_cache=None):
+    """Load a Stage-1 train-induced graph while sharing relation-pair features."""
+    data = torch.load(processed_data_path(dataset), map_location="cpu", weights_only=False)
+    metadata = getattr(data, "metadata", {}) or {}
+    pretrain_mask = getattr(data, "pretrain_mask", None)
+    if pretrain_mask is None:
+        pretrain_mask = getattr(data, "train_mask", None)
+    if pretrain_mask is None:
+        pretrain_mask = torch.ones(int(data.num_nodes), dtype=torch.bool)
+    pretrain_mask = pretrain_mask.cpu().bool()
+    if int(pretrain_mask.sum()) < 2:
+        raise ValueError(f"{dataset} has fewer than two Stage-1 nodes")
+    cache_key = (
+        str(metadata.get("embedding_group") or dataset),
+        str(metadata.get("text_hash") or ""),
+        str(metadata.get("mask_hash") or ""),
+    )
+    features = None if feature_cache is None else feature_cache.get(cache_key)
+    if features is None:
+        emb_obj = torch.load(qwen3_emb_path(dataset), map_location="cpu", weights_only=False)
+        full_features = emb_obj["emb"] if isinstance(emb_obj, dict) else emb_obj
+        if full_features.ndim != 2 or full_features.size(0) != int(data.num_nodes):
+            raise ValueError(
+                f"{dataset} embedding shape {tuple(full_features.shape)} does not match "
+                f"num_nodes={int(data.num_nodes)}"
+            )
+        features = full_features[pretrain_mask].contiguous()
+        if feature_cache is not None:
+            feature_cache[cache_key] = features
+    edge_index, _ = subgraph(
+        pretrain_mask,
+        data.edge_index.cpu(),
+        relabel_nodes=True,
+        num_nodes=int(data.num_nodes),
+    )
+    manifest = {
+        "dataset": dataset,
+        "embedding_group": cache_key[0],
+        "text_hash": metadata.get("text_hash"),
+        "mask_hash": metadata.get("mask_hash"),
+        "nodes": int(features.size(0)),
+        "directed_edges": int(edge_index.size(1)),
+        "feature_dim": int(features.size(1)),
+        "feature_dtype": str(features.dtype),
+        "training_scope": metadata.get("training_scope"),
+    }
+    return features, edge_index.contiguous(), manifest
+
+
 def load_labels(dataset):
     _, labels, _ = load_features_and_labels(dataset)
     return labels

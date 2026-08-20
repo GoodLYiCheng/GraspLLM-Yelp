@@ -49,6 +49,18 @@ DATASETS: "OrderedDict[str, str]" = OrderedDict([
     ("sportsfit",  "sportsfit"),
     ("yelpzip_rur", "yelpzip_rur"),
     ("yelpzip_rbr", "yelpzip_rbr"),
+    ("amazon_cellphones_rur", "amazon_cellphones_rur"),
+    ("amazon_cellphones_rpr", "amazon_cellphones_rpr"),
+    ("amazon_clothing_rur", "amazon_clothing_rur"),
+    ("amazon_clothing_rpr", "amazon_clothing_rpr"),
+    ("amazon_electronics_rur", "amazon_electronics_rur"),
+    ("amazon_electronics_rpr", "amazon_electronics_rpr"),
+    ("amazon_home_rur", "amazon_home_rur"),
+    ("amazon_home_rpr", "amazon_home_rpr"),
+    ("amazon_sports_rur", "amazon_sports_rur"),
+    ("amazon_sports_rpr", "amazon_sports_rpr"),
+    ("amazon_toys_rur", "amazon_toys_rur"),
+    ("amazon_toys_rpr", "amazon_toys_rpr"),
 ])
 
 DEFAULT_MAX_LENGTH = {
@@ -70,6 +82,18 @@ DEFAULT_MAX_LENGTH = {
     "sportsfit":    256,   # p99=69,  max=230
     "yelpzip_rur":  512,
     "yelpzip_rbr":  512,
+    "amazon_cellphones_rur": 512,
+    "amazon_cellphones_rpr": 512,
+    "amazon_clothing_rur": 512,
+    "amazon_clothing_rpr": 512,
+    "amazon_electronics_rur": 512,
+    "amazon_electronics_rpr": 512,
+    "amazon_home_rur": 512,
+    "amazon_home_rpr": 512,
+    "amazon_sports_rur": 512,
+    "amazon_sports_rpr": 512,
+    "amazon_toys_rur": 512,
+    "amazon_toys_rpr": 512,
 }
 
 def assemble_text(dataset: str, data) -> List[str]:
@@ -91,10 +115,10 @@ def _safe_torch_load(path: str):
     return torch.load(path, map_location="cpu", weights_only=False)
 
 
-def reuse_yelpzip_embedding(*, overwrite: bool = False) -> None:
-    """Reuse the identical RUR text embedding for RBR after hash validation."""
-    source_dir = os.path.join(DATASET_ROOT, "yelpzip_rur")
-    target_dir = os.path.join(DATASET_ROOT, "yelpzip_rbr")
+def reuse_relation_embedding(source_name: str, target_name: str, *, overwrite: bool = False) -> None:
+    """Reuse identical relation-view text embeddings after metadata validation."""
+    source_dir = os.path.join(DATASET_ROOT, source_name)
+    target_dir = os.path.join(DATASET_ROOT, target_name)
     source_emb = os.path.join(source_dir, "qwen3_emb_x.pt")
     target_emb = os.path.join(target_dir, "qwen3_emb_x.pt")
     source_data = os.path.join(source_dir, "processed_data.pt")
@@ -107,10 +131,10 @@ def reuse_yelpzip_embedding(*, overwrite: bool = False) -> None:
     right_meta = getattr(right, "metadata", {})
     for key in ("review_id_hash", "text_hash", "mask_hash"):
         if not left_meta.get(key) or left_meta.get(key) != right_meta.get(key):
-            raise ValueError(f"cannot reuse YelpZip embedding: {key} differs")
+            raise ValueError(f"cannot reuse {source_name} embedding for {target_name}: {key} differs")
     if os.path.exists(target_emb):
         if not overwrite:
-            print(f"[yelpzip_rbr] EXISTS -> {target_emb}")
+            print(f"[{target_name}] EXISTS -> {target_emb}")
             return
         os.remove(target_emb)
     try:
@@ -119,7 +143,27 @@ def reuse_yelpzip_embedding(*, overwrite: bool = False) -> None:
     except OSError:
         shutil.copy2(source_emb, target_emb)
         mode = "copy"
-    print(f"[yelpzip_rbr] reused identical RUR embedding via {mode} -> {target_emb}")
+    print(f"[{target_name}] reused {source_name} embedding via {mode} -> {target_emb}")
+
+
+REVIEW_RELATION_PAIRS = (
+    ("yelpzip_rur", "yelpzip_rbr"),
+    ("amazon_cellphones_rur", "amazon_cellphones_rpr"),
+    ("amazon_clothing_rur", "amazon_clothing_rpr"),
+    ("amazon_electronics_rur", "amazon_electronics_rpr"),
+    ("amazon_home_rur", "amazon_home_rpr"),
+    ("amazon_sports_rur", "amazon_sports_rpr"),
+    ("amazon_toys_rur", "amazon_toys_rpr"),
+)
+
+
+def reuse_review_embeddings(*, overwrite: bool = False) -> None:
+    for source_name, target_name in REVIEW_RELATION_PAIRS:
+        reuse_relation_embedding(source_name, target_name, overwrite=overwrite)
+
+
+def reuse_yelpzip_embedding(*, overwrite: bool = False) -> None:
+    reuse_relation_embedding("yelpzip_rur", "yelpzip_rbr", overwrite=overwrite)
 
 
 def last_token_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:

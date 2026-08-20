@@ -1,4 +1,4 @@
-"""Combine zero-shot and ICL YelpZip probability metrics into one report."""
+"""Combine no-ICL/baseline and ICL YelpZip metrics into one report."""
 from __future__ import annotations
 
 import argparse
@@ -31,25 +31,30 @@ def _mean_std(records: list[dict]) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize all static YelpZip zero/ICL results")
+    parser = argparse.ArgumentParser(description="Summarize static YelpZip no-ICL/ICL results")
     parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("--no-icl-dir-name", default="zero_shot")
     args = parser.parse_args()
     root = args.root
-    payload: dict = {"root": str(root.resolve()), "zero_shot": {}, "in_context_few_shot": {}}
+    baseline_key = "no_icl" if args.no_icl_dir_name == "no_icl" else "zero_shot"
+    baseline_label = "no-ICL" if baseline_key == "no_icl" else "zero-shot"
+    payload: dict = {
+        "root": str(root.resolve()), baseline_key: {}, "in_context_few_shot": {}
+    }
 
-    zero_paths = {
-        relation: root / "zero_shot" / relation / "probability_metrics.json"
+    baseline_paths = {
+        relation: root / args.no_icl_dir_name / relation / "probability_metrics.json"
         for relation in RELATIONS
     }
-    zero_exists = {relation: path.is_file() for relation, path in zero_paths.items()}
-    if any(zero_exists.values()) and not all(zero_exists.values()):
+    baseline_exists = {relation: path.is_file() for relation, path in baseline_paths.items()}
+    if any(baseline_exists.values()) and not all(baseline_exists.values()):
         raise FileNotFoundError(
-            "partial zero-shot results found; both RUR and RBR metrics are required or neither"
+            f"partial {baseline_label} results found; both RUR and RBR metrics are required or neither"
         )
 
     for relation in RELATIONS:
-        if all(zero_exists.values()):
-            payload["zero_shot"][relation] = _read(zero_paths[relation])
+        if all(baseline_exists.values()):
+            payload[baseline_key][relation] = _read(baseline_paths[relation])
         payload["in_context_few_shot"][relation] = {}
         for shot in SHOTS:
             records = [_read(
@@ -70,11 +75,11 @@ def main() -> int:
         "|---|---|---:|---:|---:|",
     ]
     for relation in RELATIONS:
-        if relation in payload["zero_shot"]:
-            zero = payload["zero_shot"][relation]["test"]
+        if relation in payload[baseline_key]:
+            baseline = payload[baseline_key][relation]["test"]
             lines.append(
-                f"| {relation} | zero-shot | {zero['pr_auc']:.6f} | "
-                f"{zero['roc_auc']:.6f} | {zero['fraud_f1']:.6f} |"
+                f"| {relation} | {baseline_label} | {baseline['pr_auc']:.6f} | "
+                f"{baseline['roc_auc']:.6f} | {baseline['fraud_f1']:.6f} |"
             )
         for shot in SHOTS:
             metrics = payload["in_context_few_shot"][relation][f"k{shot}"]["test_mean_std"]

@@ -6,8 +6,8 @@ export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
 # --- config (edit / override via env) ---
-DATASETS=${DATASETS:-"arxiv pubmed computer history reddit"}
-SAMPLES_PER_DATASET=${SAMPLES_PER_DATASET:-60}
+DATASETS=${DATASETS:-"yelpzip_rur yelpzip_rbr amazon_cellphones_rur amazon_cellphones_rpr amazon_clothing_rur amazon_clothing_rpr amazon_electronics_rur amazon_electronics_rpr amazon_home_rur amazon_home_rpr amazon_sports_rur amazon_sports_rpr amazon_toys_rur amazon_toys_rpr"}
+STEPS_PER_DATASET=${STEPS_PER_DATASET:-1}
 NUM_EPOCHS=${NUM_EPOCHS:-300}
 LR=${LR:-1e-4}
 NUM_SAMPLES=${NUM_SAMPLES:-2000}
@@ -36,7 +36,7 @@ cd "$REPO/gnn"
 
 CUDA_VISIBLE_DEVICES="$GPU" python -u train.py \
     --datasets $DATASETS \
-    --samples-per-dataset "$SAMPLES_PER_DATASET" \
+    --steps-per-dataset "$STEPS_PER_DATASET" \
     --num-epochs "$NUM_EPOCHS" \
     --lr "$LR" \
     --num-samples "$NUM_SAMPLES" \

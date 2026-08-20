@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$BACKBONE" ]] || { echo "--backbone required (vicuna|mistral|llama3|qwen3|qwen3-moe)"; exit 1; }
-[[ -n "$SOURCE"   ]] || { echo "--source required (e.g. arxiv|computer|reddit)"; exit 1; }
+[[ -n "$SOURCE"   ]] || { echo "--source required (single dataset or hyphen-separated registered datasets)"; exit 1; }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO"

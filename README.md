@@ -11,6 +11,9 @@
 
 数据集、模型权重、checkpoint 和实验输出不包含在本仓库中。Linux 端从 Stage 0 到最终推理的完整命令见 [run.md](run.md)，YelpZip 基线设计说明见 [YELPZIP_BASE.md](YELPZIP_BASE.md)。
 
+YelpZip + Amazon 六类评论的 Stage 1/Stage 3 训练、可上传原始数据包和严格
+held-out 隔离流程见 [YELP_AMAZON_PRETRAIN.md](YELP_AMAZON_PRETRAIN.md)。
+
 ## 原始项目
 
 - GraspLLM 官方代码：[Heinz217/GraspLLM](https://github.com/Heinz217/GraspLLM)

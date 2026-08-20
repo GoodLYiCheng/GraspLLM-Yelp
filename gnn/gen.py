@@ -9,14 +9,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.paths import processed_data_path  # noqa: E402
 
 
-def _yelpzip_input(dataset, relation_text, indices, node_embeddings, adj_lists,
-                   adj_lists_dropped, labels, output_path, threshold=0.1, beta=0.55):
+def review_fraud_input(dataset, relation_text, indices, node_embeddings, adj_lists,
+                       adj_lists_dropped, labels, output_path, threshold=0.1, beta=0.55,
+                       allowed_mask=None):
     del adj_lists_dropped
     tens = torch.load(processed_data_path(dataset), weights_only=False)
     raw_texts = tens.raw_texts
     review_ids = tens.review_ids
     label_dict = {0: "Legitimate", 1: "Fraudulent"}
+    metadata = getattr(tens, "metadata", {}) or {}
+    source_name = "Amazon" if metadata.get("source_domain") == "amazon" else "Yelp"
     adjacency_dict = build_adjacency_dict(adj_lists)
+    context_nodes = 0
     with open(output_path, "w", encoding="utf-8") as handle:
         for center in tqdm(indices, desc=f"Processing {dataset}", unit="graph",
                            ascii=True, ncols=100):
@@ -25,6 +29,17 @@ def _yelpzip_input(dataset, relation_text, indices, node_embeddings, adj_lists,
                 center, node_embeddings, adjacency_dict,
                 threshold=threshold, beta=beta,
             )
+            if allowed_mask is not None:
+                invalid = [
+                    int(node) for node in graph
+                    if int(node) >= 0 and not bool(allowed_mask[int(node)])
+                ]
+                if invalid:
+                    raise RuntimeError(
+                        f"{dataset} train context leaks {len(invalid)} held-out nodes; "
+                        f"examples={invalid[:10]}"
+                    )
+            context_nodes += sum(int(node) >= 0 for node in graph)
             label = label_dict[int(labels[center])]
             record = {
                 "id": center,
@@ -35,7 +50,7 @@ def _yelpzip_input(dataset, relation_text, indices, node_embeddings, adj_lists,
                     {
                         "from": "human",
                         "value": (
-                            "Given a review-centered graph: <graph>, each node represents a Yelp review, "
+                            f"Given a review-centered graph: <graph>, each node represents a review from {source_name}, "
                             f"and edges connect reviews written for the same {relation_text}. "
                             f"The target review text is: {raw_texts[center]} "
                             "Classify the target review as exactly one of: Fraudulent, Legitimate."
@@ -45,11 +60,12 @@ def _yelpzip_input(dataset, relation_text, indices, node_embeddings, adj_lists,
                 ],
             }
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return {"records": int(len(indices)), "context_nodes": int(context_nodes), "leakage": 0}
 
 
 def yelpzip_rur_input(indices, node_embeddings, adj_lists, adj_lists_dropped,
                       labels, output_path, threshold=0.1, beta=0.55):
-    return _yelpzip_input(
+    return review_fraud_input(
         "yelpzip_rur", "user", indices, node_embeddings, adj_lists,
         adj_lists_dropped, labels, output_path, threshold=threshold, beta=beta,
     )
@@ -57,7 +73,7 @@ def yelpzip_rur_input(indices, node_embeddings, adj_lists, adj_lists_dropped,
 
 def yelpzip_rbr_input(indices, node_embeddings, adj_lists, adj_lists_dropped,
                       labels, output_path, threshold=0.1, beta=0.55):
-    return _yelpzip_input(
+    return review_fraud_input(
         "yelpzip_rbr", "business", indices, node_embeddings, adj_lists,
         adj_lists_dropped, labels, output_path, threshold=threshold, beta=beta,
     )

@@ -28,11 +28,23 @@ DATASETS: Final[tuple] = (
     "cornell", "texas", "washington", "wisconsin",
     "bookchild", "sportsfit", "yelpzip_rur", "yelpzip_rbr",
     "yelpzip_grasp",
+    "amazon_cellphones_rur", "amazon_cellphones_rpr",
+    "amazon_clothing_rur", "amazon_clothing_rpr",
+    "amazon_electronics_rur", "amazon_electronics_rpr",
+    "amazon_home_rur", "amazon_home_rpr",
+    "amazon_sports_rur", "amazon_sports_rpr",
+    "amazon_toys_rur", "amazon_toys_rpr",
 )
 
 # Default Stage-1 GNN source datasets. Modify as needed for your setup.
 STAGE1_SOURCE_DATASETS: Final[tuple] = (
-    "arxiv", "pubmed", "computer", "history", "reddit",
+    "yelpzip_rur", "yelpzip_rbr",
+    "amazon_cellphones_rur", "amazon_cellphones_rpr",
+    "amazon_clothing_rur", "amazon_clothing_rpr",
+    "amazon_electronics_rur", "amazon_electronics_rpr",
+    "amazon_home_rur", "amazon_home_rpr",
+    "amazon_sports_rur", "amazon_sports_rpr",
+    "amazon_toys_rur", "amazon_toys_rpr",
 )
 
 

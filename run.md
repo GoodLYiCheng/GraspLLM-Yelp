@@ -4,6 +4,12 @@
 
 > Stage 1 当前实现是单进程、单 GPU 训练，不支持 DDP。Stage 0、Stage 2、Stage 3 和最终推理支持多 GPU，具体方式见各节。
 
+> 本文后续章节保留原始“非 Yelp Stage 1 + Arxiv projector”基线。若要执行
+> Yelp + Amazon 的 Stage 1/Stage 3 新流程，请直接使用
+> [YELP_AMAZON_PRETRAIN.md](YELP_AMAZON_PRETRAIN.md) 和
+> `scripts/run_yelp_amazon_pretrain.sh`；该流程的无 ICL 结果必须标记为
+> `no_icl`，不能标记为 zero-shot。
+
 ## 0. 公共环境与路径
 
 ```bash

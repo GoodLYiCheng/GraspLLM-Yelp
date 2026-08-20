@@ -24,11 +24,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # module before importing gen.py.  Normal ``import seq`` behaviour is unchanged.
 sys.modules.setdefault("seq", sys.modules[__name__])
 
-from gnn import MotifGNN  
-from get_matrix import load_data, compute_motifs_for_subgraph, convert_edge_index_to_adj_list, load_labels, \
-    compute_motifs_torch, compute_motifs_sparse, compute_motifs_subgraph
-from utils.paths import (dataset_dir, processed_data_path, 
-                         CHECKPOINT_ROOT)
+try:
+    from .gnn import MotifGNN
+    from .get_matrix import (
+        load_data, compute_motifs_for_subgraph, convert_edge_index_to_adj_list,
+        load_labels, compute_motifs_torch, compute_motifs_sparse,
+        compute_motifs_subgraph,
+    )
+except ImportError:
+    from gnn import MotifGNN
+    from get_matrix import (
+        load_data, compute_motifs_for_subgraph, convert_edge_index_to_adj_list,
+        load_labels, compute_motifs_torch, compute_motifs_sparse,
+        compute_motifs_subgraph,
+    )
+from utils.paths import (
+    STAGE1_SOURCE_DATASETS,
+    dataset_dir,
+    processed_data_path,
+    CHECKPOINT_ROOT,
+)
 
 def cosine_similarity(vec1, vec2):
     dot_product = torch.dot(vec1, vec2)
@@ -316,8 +331,8 @@ def find_closest_dataset_with_sampling(new_features, reference_features, sample_
 
 config = {
     # Stage-1 sources (see gnn/train.sh for rationale).
-    "datasets": ["arxiv", "pubmed", "computer", "history", "reddit"],
-    "samples_per_dataset": 60,
+    "datasets": list(STAGE1_SOURCE_DATASETS),
+    "steps_per_dataset": 1,
     "num_epochs": 1,
     "learning_rate": 0.0001,
     "num_samples": 2000,
@@ -328,13 +343,16 @@ config = {
     "out_channels": 128,
     "tau": 0.4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "model_save_path": os.path.join(CHECKPOINT_ROOT,
-                                    "structure_learner_qwen3.pth"),
+    "model_save_path": os.environ.get(
+        "GRASPLLM_STAGE1_CHECKPOINT",
+        os.path.join(CHECKPOINT_ROOT, "structure_learner_qwen3.pth"),
+    ),
 }
 
 
 def process_new_dataset(model, new_dataset_name, device, *,
-                        motif_parallel_gpus=None, gnn_chunk_size=8192):
+                        motif_parallel_gpus=None, gnn_chunk_size=8192,
+                        node_scope_mask=None):
     """Run the trained shared GNN on a new dataset.
 
     Qwen3-Embedding-8B gives a unified feature space across datasets, so we
@@ -374,6 +392,17 @@ def process_new_dataset(model, new_dataset_name, device, *,
         k: v.cpu() if use_motif_parallel else v.to(device)
         for k, v in motif_adj.items()
     }
+    if node_scope_mask is not None:
+        scope = node_scope_mask.cpu().bool()
+        if scope.numel() != num_nodes:
+            raise ValueError("node_scope_mask length does not match dataset")
+        filtered = {}
+        for name, value in motif_adj.items():
+            edge_cpu = value.cpu()
+            keep = scope[edge_cpu[0]] & scope[edge_cpu[1]]
+            edge_cpu = edge_cpu[:, keep]
+            filtered[name] = edge_cpu if use_motif_parallel else edge_cpu.to(device)
+        motif_adj = filtered
     for motif in model.motif_names:
         if motif not in motif_adj:
             motif_adj[motif] = torch.zeros(
@@ -394,6 +423,26 @@ def process_new_dataset(model, new_dataset_name, device, *,
             data = Data(x=node_features, edge_index=edge_index).to(device)
             embeddings = model(data, motif_adj)
     return embeddings, motif_adj
+
+
+def balanced_train_indices(labels, train_mask, total, seed):
+    candidates = torch.where(train_mask.cpu().bool())[0].numpy()
+    if total is None:
+        return candidates
+    if total <= 0 or total % 2:
+        raise ValueError("--train-samples must be a positive even integer")
+    rng = np.random.default_rng(seed)
+    labels_np = labels.cpu().numpy()
+    selected = []
+    per_class = total // 2
+    for label in (0, 1):
+        pool = candidates[labels_np[candidates] == label]
+        if pool.size < per_class:
+            raise ValueError(
+                f"class {label} has {pool.size} train nodes, fewer than requested {per_class}"
+            )
+        selected.extend(map(int, rng.choice(pool, size=per_class, replace=False)))
+    return np.asarray(sorted(selected), dtype=np.int64)
 
 
 def load_model(cfg):
@@ -433,7 +482,8 @@ TRAIN_DATASETS = {"arxiv", "computer", "reddit"}
 
 def generate_data(new_dataset, threshold=0.1, beta=0.55,
                   large_graph=False, fp16=True, compile_kernel=False,
-                  motif_parallel_gpus=None, gnn_chunk_size=8192):
+                  motif_parallel_gpus=None, gnn_chunk_size=8192,
+                  train_samples=None, sampling_seed=42):
     model = load_model(config)
     embeddings, motif_adj = process_new_dataset(
         model, new_dataset, device=config["device"],
@@ -463,12 +513,18 @@ def generate_data(new_dataset, threshold=0.1, beta=0.55,
     tens = torch.load(processed_data_path(new_dataset), weights_only=False)
     labels = tens.y
     metadata = getattr(tens, "metadata", {})
-    if new_dataset in ("yelpzip_rur", "yelpzip_rbr"):
-        yelp_seed = int(metadata.get("seed", 42))
-        random.seed(yelp_seed)
-        np.random.seed(yelp_seed)
-        torch.manual_seed(yelp_seed)
-    train_indices = torch.where(tens.train_mask)[0].numpy()
+    is_review_dataset = (
+        new_dataset in ("yelpzip_rur", "yelpzip_rbr")
+        or metadata.get("source_domain") == "amazon"
+    )
+    if is_review_dataset:
+        review_seed = int(metadata.get("seed", sampling_seed))
+        random.seed(review_seed)
+        np.random.seed(review_seed)
+        torch.manual_seed(review_seed)
+    train_indices = balanced_train_indices(
+        labels, tens.train_mask, train_samples, sampling_seed
+    ) if is_review_dataset else torch.where(tens.train_mask)[0].numpy()
     val_mask = getattr(tens, "val_mask", None)
     val_indices = (
         torch.where(val_mask)[0].numpy()
@@ -502,39 +558,86 @@ def generate_data(new_dataset, threshold=0.1, beta=0.55,
         "yelpzip_rur": gen.yelpzip_rur_input,
         "yelpzip_rbr": gen.yelpzip_rbr_input,
     }
-    if new_dataset not in DISPATCH:
+    if is_review_dataset:
+        relation_text = str(metadata.get("relation_text") or (
+            "user" if new_dataset == "yelpzip_rur" else "business"
+        ))
+        fn = None
+    elif new_dataset not in DISPATCH:
         raise ValueError(f"Unknown dataset: {new_dataset!r}.  "
                          f"Add a *_input() function in gen.py and a row in the "
                          f"DISPATCH table here.")
-    fn = DISPATCH[new_dataset]
+    else:
+        fn = DISPATCH[new_dataset]
     common = (node_embeddings, adj_lists, adj_lists_dropped, labels)
 
-    if new_dataset in TRAIN_DATASETS:
+    train_enabled = new_dataset in TRAIN_DATASETS or is_review_dataset
+    leakage_audit = None
+    if train_enabled:
         print(f"  -> writing train ({len(train_indices)} samples) -> {train_path}")
-        fn(train_indices, *common, train_path, threshold=threshold, beta=beta)
+        if is_review_dataset:
+            train_mask = tens.train_mask.cpu().bool()
+            if bool(train_mask.all()):
+                train_embeddings = node_embeddings
+                train_edge_index = edge_index
+            else:
+                train_embeddings, _ = process_new_dataset(
+                    model, new_dataset, device=config["device"],
+                    motif_parallel_gpus=motif_parallel_gpus,
+                    gnn_chunk_size=gnn_chunk_size,
+                    node_scope_mask=train_mask,
+                )
+                keep = train_mask[edge_index[0]] & train_mask[edge_index[1]]
+                train_edge_index = edge_index[:, keep]
+            leakage_audit = gen.review_fraud_input(
+                new_dataset, relation_text, train_indices,
+                train_embeddings, train_edge_index, train_edge_index,
+                labels, train_path, threshold=threshold, beta=beta,
+                allowed_mask=train_mask,
+            )
+        else:
+            fn(train_indices, *common, train_path, threshold=threshold, beta=beta)
     else:
         print(f"  -> {new_dataset} is a test-only dataset; skipping train split")
 
     if len(val_indices):
         print(f"  -> writing val   ({len(val_indices)} samples) -> {val_path}")
-        fn(val_indices, *common, val_path, threshold=threshold, beta=beta)
+        if is_review_dataset:
+            gen.review_fraud_input(
+                new_dataset, relation_text, val_indices,
+                *common, val_path,
+                threshold=threshold, beta=beta,
+            )
+        else:
+            fn(val_indices, *common, val_path, threshold=threshold, beta=beta)
 
     print(f"  -> writing test  ({len(test_indices)} samples) -> {test_path}")
-    fn(test_indices,  *common, test_path,  threshold=threshold, beta=beta)
+    if is_review_dataset:
+        gen.review_fraud_input(
+            new_dataset, relation_text, test_indices,
+            *common, test_path, threshold=threshold, beta=beta,
+        )
+    else:
+        fn(test_indices, *common, test_path, threshold=threshold, beta=beta)
 
-    if new_dataset in ("yelpzip_rur", "yelpzip_rbr"):
+    if is_review_dataset:
         ocs_manifest = {
             "dataset": new_dataset,
             "relation": metadata.get("relation"),
-            "protocol": "static_transductive_zero_shot",
-            "gnn_training_uses_yelp": False,
-            "labels_used_for_ocs": False,
+            "protocol": "train_induced_projector_then_static_transductive_eval",
+            "gnn_training_uses_review_graphs": True,
+            "labels_used_for_projector_train": True,
             "seed": int(metadata.get("seed", 42)),
             "threshold": float(threshold),
             "beta": float(beta),
             "max_sequence_length": 111,
             "validation_rows": int(len(val_indices)),
             "test_rows": int(len(test_indices)),
+            "train_rows": int(len(train_indices)),
+            "train_sampling_seed": int(sampling_seed),
+            "train_context_scope": "train_induced",
+            "eval_context_scope": "full_static_transductive_no_labels",
+            "leakage_audit": leakage_audit,
             "review_id_hash": metadata.get("review_id_hash"),
             "text_hash": metadata.get("text_hash"),
             "mask_hash": metadata.get("mask_hash"),
@@ -602,6 +705,9 @@ def parse_args():
     parser.add_argument('--gnn-chunk-size', type=int, default=8192,
                         help='Target-node chunk size for --motif-parallel-gpus (default: 8192). '
                              'Lower this to reduce per-GPU peak memory.')
+    parser.add_argument('--train-samples', type=int, default=None,
+                        help='Balanced review-projector training records to write.')
+    parser.add_argument('--sampling-seed', type=int, default=42)
     return parser.parse_args()
 
 
@@ -625,7 +731,9 @@ if __name__ == "__main__":
                   large_graph=args.large_graph, fp16=args.fp16,
                   compile_kernel=args.compile_kernel,
                   motif_parallel_gpus=motif_parallel_gpus,
-                  gnn_chunk_size=args.gnn_chunk_size)
+                  gnn_chunk_size=args.gnn_chunk_size,
+                  train_samples=args.train_samples,
+                  sampling_seed=args.sampling_seed)
 
     
 

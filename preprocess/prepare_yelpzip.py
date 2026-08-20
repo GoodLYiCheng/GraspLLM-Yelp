@@ -175,7 +175,7 @@ def prepare(args: argparse.Namespace) -> None:
     val_mask, test_mask = stratified_masks(
         labels, val_size=args.val_size, test_size=args.test_size, seed=args.seed
     )
-    train_mask = torch.zeros(len(frame), dtype=torch.bool)
+    train_mask = ~(val_mask | test_mask)
     review_ids = frame["Unnamed: 0"].astype(str).tolist()
     raw_texts = frame["text"].astype(str).tolist()
     text_hash = _hash_lines(raw_texts)
@@ -206,6 +206,7 @@ def prepare(args: argparse.Namespace) -> None:
     common = {
         "y": torch.from_numpy(labels).long(),
         "train_mask": train_mask,
+        "pretrain_mask": train_mask.clone(),
         "val_mask": val_mask,
         "test_mask": test_mask,
         "raw_texts": raw_texts,
@@ -221,11 +222,15 @@ def prepare(args: argparse.Namespace) -> None:
         )
         metadata = {
             "dataset": dataset_name,
+            "source_domain": "yelp",
             "raw_path": str(args.raw_path.resolve()),
             "relation": "RUR" if entity_column == "user_id" else "RBR",
+            "relation_text": "user" if entity_column == "user_id" else "business",
             "entity_column": entity_column,
             "node_feature": "review_text_only",
             "static_transductive": True,
+            "training_scope": "train_induced",
+            "evaluation_scope": "full_static_transductive_no_labels",
             "uses_time": False,
             "uses_rating": False,
             "uses_tag": False,
@@ -237,6 +242,8 @@ def prepare(args: argparse.Namespace) -> None:
             "mask_hash": mask_hash,
             "val_rows": int(val_mask.sum()),
             "test_rows": int(test_mask.sum()),
+            "train_rows": int(train_mask.sum()),
+            "embedding_group": "yelpzip",
             **graph_stats,
         }
         data = Data(edge_index=edge_index, num_nodes=len(frame), **common)

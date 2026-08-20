@@ -7,6 +7,7 @@ YELP_MAX_LENGTH="${YELP_MAX_LENGTH:-32768}"
 YELP_QUERY_MAX_TOKENS="${YELP_QUERY_MAX_TOKENS:-}"
 YELP_SUPPORT_MAX_TOKENS="${YELP_SUPPORT_MAX_TOKENS:-}"
 MAX_VALIDATION_QUERIES=""; VALIDATION_SUBSAMPLE_SEED=42
+NO_ICL_DIR_NAME=${NO_ICL_DIR_NAME:-zero_shot}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,8 +84,8 @@ run_relation_pair() {
 }
 
 if [[ "$ICL_ONLY" == false ]]; then
-    echo "[all-eval] GPU: zero-shot RUR/RBR"
-    run_relation_pair "$OUTPUT_DIR/zero_shot/yelpzip_rur" "$OUTPUT_DIR/zero_shot/yelpzip_rbr"
+    echo "[all-eval] GPU: no-ICL RUR/RBR (directory=$NO_ICL_DIR_NAME)"
+    run_relation_pair "$OUTPUT_DIR/$NO_ICL_DIR_NAME/yelpzip_rur" "$OUTPUT_DIR/$NO_ICL_DIR_NAME/yelpzip_rbr"
 else
     echo "[all-eval] skipping zero-shot (--icl-only)"
 fi
@@ -121,5 +122,6 @@ for shot in "${SHOTS[@]}"; do
     done
 done
 
-python -m experiments.yelpzip_fewshot.summarize --root "$OUTPUT_DIR"
+python -m experiments.yelpzip_fewshot.summarize \
+    --root "$OUTPUT_DIR" --no-icl-dir-name "$NO_ICL_DIR_NAME"
 echo "[all-eval] complete: $OUTPUT_DIR/all_results_summary.json"

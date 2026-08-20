@@ -35,7 +35,13 @@ from utils.constants import (
     DEFAULT_USER_GRAPH_TOKEN,
     IGNORE_INDEX,
 )
-from utils.paths import processed_data_path, qwen3_emb_path, dataset_dir, model_dir
+from utils.paths import (
+    DATASETS as REGISTERED_DATASETS,
+    processed_data_path,
+    qwen3_emb_path,
+    dataset_dir,
+    model_dir,
+)
 from torch.utils.data import Dataset
 from grasp_trainer import GraspTrainer
 
@@ -703,6 +709,7 @@ class LazySupervisedGraphDataset(Dataset):
         self.datas={}
         list_data_dict = []
         self.pretrained_embs={}
+        embedding_cache = {}
         # self.index={}
         for d, dataset in enumerate(self.use_dataset):
             repeat=1
@@ -712,7 +719,9 @@ class LazySupervisedGraphDataset(Dataset):
                 ds=dataset.split('.')
                 repeat=int(ds[1])
                 dataset=ds[0]
-            if "arxiv" in dataset:
+            if dataset in REGISTERED_DATASETS:
+                ds_key = dataset
+            elif "arxiv" in dataset:
                 ds_key = "arxiv"
             elif "products"  in dataset:
                 ds_key = "products"
@@ -755,9 +764,24 @@ class LazySupervisedGraphDataset(Dataset):
                 raise ValueError
             data_path = processed_data_path(ds_key)
             data = torch.load(data_path, weights_only=False)
-            self.datas[dataset]=data
             data_dir=os.path.dirname(data_path)
-            pretrained_emb = self.load_pretrain_embedding_graph(data_dir)
+            metadata = getattr(data, "metadata", {}) or {}
+            embedding_key = (
+                str(metadata.get("embedding_group") or ds_key),
+                str(metadata.get("text_hash") or ""),
+                int(data.num_nodes),
+            )
+            pretrained_emb = embedding_cache.get(embedding_key)
+            if pretrained_emb is None:
+                pretrained_emb = self.load_pretrain_embedding_graph(data_dir)
+                if pretrained_emb.size(0) != int(data.num_nodes):
+                    raise ValueError(
+                        f"{dataset} embedding rows={pretrained_emb.size(0)} "
+                        f"do not match nodes={int(data.num_nodes)}"
+                    )
+                embedding_cache[embedding_key] = pretrained_emb
+            else:
+                rank0_print(f"Reused embedding cache {embedding_key[0]} for {dataset}")
             self.structure_emb = None
 
             self.pretrained_embs[dataset] = pretrained_emb
@@ -878,13 +902,14 @@ class LazySupervisedGraphDataset(Dataset):
 
         File layout: <data_dir>/qwen3_emb_x.pt
             either a Tensor (N, 4096) fp16 or a dict with key 'emb' of that shape.
-        Returns a fp32 Tensor.  fp32 is required because the projector inputs
-        are fp32; conversion at load time avoids per-step casts.
+        Keeps the stored dtype (normally fp16) on CPU.  ``__getitem__`` writes
+        only the selected graph rows into a small fp32 tensor, avoiding a 2x
+        expansion of every full-dataset embedding.
         """
         emb_path = os.path.join(data_dir, "qwen3_emb_x.pt")
         obj = torch.load(emb_path, weights_only=False)
         emb = obj["emb"] if isinstance(obj, dict) else obj
-        return emb.float()
+        return emb
 
     def __len__(self):
         return len(self.list_data_dict)
