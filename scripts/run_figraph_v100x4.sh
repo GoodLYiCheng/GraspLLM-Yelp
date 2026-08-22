@@ -12,6 +12,7 @@ set -euo pipefail
 PYTHON_BIN="${PYTHON_BIN:-python}"
 MODE="${MODE:-smoke}"                     # smoke | pilot | full
 V100_GPU_IDS="${V100_GPU_IDS:-0,1,2,3}"
+V100_WORKERS="${V100_WORKERS:-4}"
 MAX_LENGTH="${MAX_LENGTH:-16384}"
 NO_PROGRESS="${NO_PROGRESS:-1}"
 FORCE_PREFLIGHT="${FORCE_PREFLIGHT:-0}"
@@ -19,12 +20,17 @@ FIGRAPH_YEARS="${FIGRAPH_YEARS:-2014 2015 2016 2017 2018 2019 2020 2021 2022}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 IFS=',' read -r -a GPU_IDS <<< "$V100_GPU_IDS"
 read -r -a SNAPSHOT_YEARS <<< "$FIGRAPH_YEARS"
-[[ "${#GPU_IDS[@]}" -eq 4 ]] || { echo "V100_GPU_IDS must contain exactly four GPU IDs" >&2; exit 2; }
+[[ "$V100_WORKERS" == "2" || "$V100_WORKERS" == "4" ]] || {
+  echo "V100_WORKERS must be 2 or 4" >&2; exit 2;
+}
+[[ "${#GPU_IDS[@]}" -eq "$V100_WORKERS" ]] || {
+  echo "V100_GPU_IDS must contain exactly $V100_WORKERS GPU IDs" >&2; exit 2;
+}
 [[ "$MAX_LENGTH" == "16384" ]] || {
   echo "the audited V100 profile fixes MAX_LENGTH=16384; use run_figraph_mvp.sh for the native-32K profile" >&2; exit 2;
 }
 
-PROFILE="v100x4_fp16_${MAX_LENGTH}"
+PROFILE="v100x${V100_WORKERS}_fp16_${MAX_LENGTH}"
 DATA_DIR="$FIGRAPH_OUTPUT_ROOT/data"
 SUPPORT_DIR="$FIGRAPH_OUTPUT_ROOT/support"
 CONTEXT_ROOT="$FIGRAPH_OUTPUT_ROOT/contexts/$PROFILE"
@@ -72,18 +78,20 @@ fi
 
 reuse_embedding=0
 if [[ "$FORCE_PREFLIGHT" != "1" && -f "$EMBEDDING" ]]; then
-  if "$PYTHON_BIN" -c 'import sys,torch; from experiments.figraph_graspllm.artifacts import file_sha256; o=torch.load(sys.argv[1],map_location="cpu",weights_only=False); m=o["metadata"]; ok=(int(m.get("final_max_length",-1))==int(sys.argv[3]) and int(m.get("merged_from_shards",-1))==4 and m.get("processed_data_sha256")==file_sha256(sys.argv[2])); raise SystemExit(0 if ok else 1)' "$EMBEDDING" "$DATA_DIR/processed_data.pt" "$MAX_LENGTH"; then
+  if "$PYTHON_BIN" -c 'import sys,torch; from experiments.figraph_graspllm.artifacts import file_sha256; o=torch.load(sys.argv[1],map_location="cpu",weights_only=False); m=o["metadata"]; ok=(int(m.get("final_max_length",-1))==int(sys.argv[3]) and int(m.get("merged_from_shards",-1))==int(sys.argv[4]) and m.get("processed_data_sha256")==file_sha256(sys.argv[2])); raise SystemExit(0 if ok else 1)' "$EMBEDDING" "$DATA_DIR/processed_data.pt" "$MAX_LENGTH" "$V100_WORKERS"; then
     reuse_embedding=1
   fi
 fi
 if [[ "$reuse_embedding" -eq 0 ]]; then
   pids=()
-  for shard_id in 0 1 2 3; do
+  shard_inputs=()
+  for ((shard_id=0; shard_id<V100_WORKERS; shard_id++)); do
     gpu="${GPU_IDS[$shard_id]}"
+    shard_inputs+=("$EMBED_DIR/shard${shard_id}.pt")
     CUDA_VISIBLE_DEVICES="$gpu" "$PYTHON_BIN" -m experiments.figraph_graspllm.encode_text \
       --processed-data "$DATA_DIR/processed_data.pt" --model-path "$QWEN3_EMBED" \
       --output "$EMBED_DIR/shard${shard_id}.pt" --max-length "$MAX_LENGTH" --device cuda \
-      --num-shards 4 --shard-id "$shard_id" --no-progress \
+      --num-shards "$V100_WORKERS" --shard-id "$shard_id" --no-progress \
       > "$LOG_ROOT/embed_shard${shard_id}.log" 2>&1 &
     pids+=("$!")
   done
@@ -91,7 +99,7 @@ if [[ "$reuse_embedding" -eq 0 ]]; then
   for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
   [[ "$failed" -eq 0 ]] || { echo "an embedding shard failed; inspect $LOG_ROOT/embed_shard*.log" >&2; exit 5; }
   "$PYTHON_BIN" -m experiments.figraph_graspllm.merge_embeddings \
-    --inputs "$EMBED_DIR/shard0.pt" "$EMBED_DIR/shard1.pt" "$EMBED_DIR/shard2.pt" "$EMBED_DIR/shard3.pt" \
+    --inputs "${shard_inputs[@]}" \
     --output "$EMBEDDING"
 else
   echo "reusing verified embedding: $EMBEDDING"
@@ -126,7 +134,7 @@ for seed in "${SEEDS[@]}"; do
     > "$LOG_ROOT/context_seed${seed}.log" 2>&1 &
   pids+=("$!")
   slot=$((slot + 1))
-  if [[ "$slot" -eq 4 ]]; then
+  if [[ "$slot" -eq "$V100_WORKERS" ]]; then
     run_batch || { echo "context generation failed; inspect $LOG_ROOT/context_seed*.log" >&2; exit 6; }
   fi
 done
@@ -166,7 +174,7 @@ for seed in "${SEEDS[@]}"; do
         CUDA_VISIBLE_DEVICES="$gpu" run_method "$method" "$k" "$seed" "$split" "$rows" "$contexts" > "$log" 2>&1 &
         pids+=("$!")
         slot=$((slot + 1))
-        if [[ "$slot" -eq 4 ]]; then
+        if [[ "$slot" -eq "$V100_WORKERS" ]]; then
           run_batch || { echo "LLM evaluation failed; inspect $LOG_ROOT" >&2; exit 7; }
         fi
       done

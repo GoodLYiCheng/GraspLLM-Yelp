@@ -40,20 +40,27 @@ Then export the paths required at the top of `scripts/run_figraph_mvp.sh` and se
 
 If a raw annual payload is unavailable, `FIGRAPH_YEARS` can explicitly select the snapshots to process. It must retain 2019--2022, and the output manifest records the omitted years. For example, an unavailable 2014 workbook can be excluded with `FIGRAPH_YEARS="2015 2016 2017 2018 2019 2020 2021 2022"`; this is an eight-snapshot protocol variant, not the default nine-snapshot experiment.
 
-## Four-V100 profile
+## V100 profiles
 
-`scripts/run_figraph_v100x4.sh` supports four 32GB V100 cards through process-level data parallelism. It deliberately uses FP16 + SDPA and defaults to a fixed 16,384-token context because V100 does not support the Ampere BF16/FlashAttention-2 path. The profile:
+`scripts/run_figraph_v100x2.sh` and `scripts/run_figraph_v100x4.sh` support two or four 32GB V100 cards through process-level data parallelism. They deliberately use FP16 + SDPA and fix the context at 16,384 tokens because V100 does not support the Ampere BF16/FlashAttention-2 path. Both profiles:
 
-- encodes four deterministic node shards concurrently and refuses to merge shards with different context lengths or provenance;
+- encode one deterministic node shard per GPU and refuse to merge shards with different context lengths or provenance;
 - runs at most one Qwen3 process per GPU;
-- schedules contexts and independent method/seed/split evaluations in four-process batches;
-- writes results below a separate `v100x4_fp16_16384` artifact namespace, so they cannot be mistaken for the native-32K primary experiment.
+- schedule contexts and independent method/seed/split evaluations in two- or four-process batches;
+- write results below separate `v100x2_fp16_16384` or `v100x4_fp16_16384` artifact namespaces, so neither can be mistaken for the native-32K primary experiment.
 
-Example:
+Two-card example:
+
+```bash
+V100_GPU_IDS=0,1 MAX_LENGTH=16384 MODE=smoke \
+  bash scripts/run_figraph_v100x2.sh
+```
+
+Four-card example:
 
 ```bash
 V100_GPU_IDS=0,1,2,3 MAX_LENGTH=16384 MODE=smoke \
   bash scripts/run_figraph_v100x4.sh
 ```
 
-This profile requires 32GB V100 cards. Four 16GB V100 cards cannot each hold an independent FP16 Qwen3-8B process and are intentionally rejected.
+Both profiles require 32GB V100 cards. A 16GB V100 cannot hold an independent FP16 Qwen3-8B process and is intentionally rejected. The two-card profile preserves the same data, split, support, scoring, and Gate contracts as the four-card profile; it only reduces process-level concurrency and uses two embedding shards.

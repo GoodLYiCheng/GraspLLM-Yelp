@@ -72,8 +72,12 @@ def test_snapshot_selection_can_skip_2014_but_not_evaluation_years():
         validate_snapshot_years((2015, 2017, 2016, 2018, 2019, 2020, 2021, 2022))
 
 
-def test_embedding_shards_are_disjoint_and_merge_in_node_order(tmp_path: Path):
-    assignments = [shard_node_indices(10, num_shards=4, shard_id=index) for index in range(4)]
+@pytest.mark.parametrize("num_shards", [2, 4])
+def test_embedding_shards_are_disjoint_and_merge_in_node_order(tmp_path: Path, num_shards: int):
+    assignments = [
+        shard_node_indices(10, num_shards=num_shards, shard_id=index)
+        for index in range(num_shards)
+    ]
     assert sorted(node for values in assignments for node in values) == list(range(10))
     paths = []
     for shard_id, indices in enumerate(assignments):
@@ -87,7 +91,7 @@ def test_embedding_shards_are_disjoint_and_merge_in_node_order(tmp_path: Path):
             "dtype": "torch.float16",
             "attention_backend": "sdpa",
             "num_nodes": 10,
-            "num_shards": 4,
+            "num_shards": num_shards,
             "shard_id": shard_id,
         }
         torch.save({
